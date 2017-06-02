@@ -1,5 +1,6 @@
 import numpy as np
 import tensorflow as tf
+import tensorflow.contrib.layers as layers
 
 
 def sample_z(m, n):
@@ -7,13 +8,27 @@ def sample_z(m, n):
 
 
 class G_conv():
-    def __init__(self):
-        pass
+    def __init__(self, meta_data):
+        self._a0 = int(meta_data['img_a'])
+        self._a1 = int(self._a0 / 2)
+        self._a2 = int(self._a1 / 2)
+        self._a3 = int(self._a2 / 2)
+        self._a4 = int(self._a3 / 2)
+        self._s4 = self._a4 * self._a4
 
     def __call__(self, z, reuse=False):
         with tf.variable_scope('gen', reuse=reuse):
-            # g = tf.
-
+            # project z into conv context
+            r = layers.fully_connected(
+                z, num_outputs=self._s4*1024,
+                activation_fn=tf.nn.relu,
+                normalizer_fn=layers.batch_norm
+            )
+            r = tf.reshape(r, [-1, self._a4, self._a4, 1024])
+            # transpose conv2d
+            r = layers.conv2d_transpose(
+                r, 512, 3, stride=2,
+            )
 
 class D_conv():
     def __init__(self):
@@ -30,8 +45,8 @@ class DCGAN():
     # 'img_a': img_a x img_a is the img size
     # 'img_c': the channels of img
     def __init__(self, G, D, meta_data):
-        self._G = G
-        self._D = D
+        self._G = G(meta_data)
+        self._D = D(meta_data)
 
         # set meta data
         self._z_dim = meta_data['z_dim']
