@@ -1,5 +1,6 @@
 import os
 import sys
+import cv2
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
@@ -19,6 +20,16 @@ def sample_z(m, n):
     return np.random.uniform(-1., 1., size=[m, n])
 
 
+def sample_y(bs):
+    r = []
+    for i in range(bs):
+        idx = i % 10
+        t = np.zeros((10))
+        t[idx] = 1
+        r.append(t)
+    return np.asarray(r, dtype=np.float32)
+
+
 def plot(samples):
     fig = plt.figure(figsize=(4, 4))
     gs = gridspec.GridSpec(4, 4)
@@ -33,6 +44,21 @@ def plot(samples):
         plt.imshow(sample.reshape(28, 28), cmap='Greys_r')
 
     return fig
+
+
+def concat(z, y):
+    return tf.concat([z, y], axis=1)
+
+
+def concat_conv(x, y):
+    x_shape = tf.shape(x)
+    y_dim = int(y.shape[1])
+    bs = x_shape[0]
+    y = tf.reshape(y, shape=[bs, 1, 1, y_dim])
+    x_like_y = y * tf.ones(
+        [bs, x_shape[1], x_shape[2], y_dim]
+    )
+    return tf.concat([x, y * x_like_y], axis=3)
 
 
 class G_conv():
@@ -120,19 +146,24 @@ class DCGAN():
 
         # set meta data
         self._z_dim = meta_data['z_dim']
+        self._y_dim = meta_data['y_dim']
         self._img_a = meta_data['img_a']
         self._img_c = meta_data['img_c']
 
         # generate sample
         self._z = tf.placeholder(tf.float32, [None, self._z_dim])
+        self._y = tf.placeholder(tf.float32, [None, self._y_dim])
         self._x = tf.placeholder(
             tf.float32, [None, self._img_a, self._img_a, self._img_c])
         self._true_x = self._x
-        self._fake_x = self._G(self._z)
+        self._fake_x = self._G(concat(self._z, self._y))
 
         # discriminate
-        self._true_logits = self._D(self._true_x)
-        self._fake_logits = self._D(self._fake_x, reuse=True)
+        self._true_logits = self._D(concat_conv(self._true_x, self._y))
+        self._fake_logits = self._D(
+            concat_conv(self._fake_x, self._y),
+            reuse=True
+        )
 
         # loss for D
         self._fake_loss = tf.reduce_mean(
@@ -161,7 +192,7 @@ class DCGAN():
 
     def train(
                 self, sess, G_optim, D_optim, data_set,
-                mb_size=32, epoches=1000000, D_K=1, G_K=1):
+                mb_size=128, epoches=1000000, D_K=1, G_K=1):
         G_optim = G_optim.minimize(self._G_loss, var_list=self._G.theta)
         D_optim = D_optim.minimize(self._D_loss, var_list=self._D.theta)
         sess.run(tf.global_variables_initializer())
@@ -170,20 +201,28 @@ class DCGAN():
             os.mkdir('out')
         for epoch in range(epoches):
             # 1. sample
-            if epoch % 1000 == 0:
+            if epoch % 100 == 0:
                 samples = sess.run(
                     self._fake_x,
-                    feed_dict={self._z: sample_z(16, self._z_dim)}
+                    feed_dict={
+                        self._y: sample_y(16),
+                        self._z: sample_z(16, self._z_dim)
+                    }
                 )
 
                 fig = plot(samples)
                 plt.savefig(
                     'out/{}.png'.format(str(i).zfill(3)),
                     bbox_inches='tight')
-                i += 1
                 plt.close(fig)
+
+                img = cv2.imread('out/{}.png'.format(str(i).zfill(3)))
+                cv2.imshow('sample', img)
+                cv2.waitKey(1)
+            if epoch % 1000 == 0:
+                i += 1
             # 2. update
-            x_b, _ = data_set.next_batch(mb_size)
+            x_b, y_b = data_set.next_batch(mb_size)
             x_b = np.reshape(
                 x_b,
                 [mb_size, self._img_a, self._img_a, self._img_c]
@@ -195,6 +234,7 @@ class DCGAN():
                     [self._D_loss, D_optim],
                     feed_dict={
                         self._x: x_b,
+                        self._y: y_b,
                         self._z: sample_z(mb_size, self._z_dim)
                     }
                 )
@@ -205,13 +245,16 @@ class DCGAN():
             for _ in range(G_K):
                 loss, _ = sess.run(
                     [self._G_loss, G_optim],
-                    feed_dict={self._z: sample_z(mb_size, self._z_dim)}
+                    feed_dict={
+                        self._y: y_b,
+                        self._z: sample_z(mb_size, self._z_dim)
+                    }
                 )
                 G_loss += loss
             G_loss /= G_K
 
             # 3. output loss info
-            if epoch % 50 == 0:
+            if epoch % 10 == 0:
                 info = 'Epoch ' + str(epoch) + ': '
                 info += 'G_loss %.4f ' % G_loss
                 info += 'D_loss %.4f \r' % D_loss
@@ -223,6 +266,7 @@ if __name__ == '__main__':
     meta = {
         'img_a': 28,
         'img_c': 1,
+        'y_dim': 10,
         'z_dim': 100
     }
     gan = DCGAN(G_conv, D_conv, meta)
