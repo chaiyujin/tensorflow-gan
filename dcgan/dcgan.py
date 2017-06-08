@@ -6,13 +6,7 @@ import matplotlib.gridspec as gridspec
 import tensorflow as tf
 import tensorflow.contrib.layers as layers
 from tensorflow.examples.tutorials.mnist import input_data
-
-
-def lrelu(x, leak=0.2, name="lrelu"):
-    with tf.variable_scope(name):
-        f1 = 0.5 * (1 + leak)
-        f2 = 0.5 * (1 - leak)
-        return f1 * x + f2 * abs(x)
+from ops import conv2d, deconv2d, lrelu
 
 
 def sample_z(m, n):
@@ -55,17 +49,9 @@ class G_conv():
             )
             r = tf.reshape(r, [-1, self._a2, self._a2, 128])
             # transpose conv2d
-            r = layers.conv2d_transpose(
-                r, 64, 4, stride=2,
-                activation_fn=tf.nn.relu,
-                normalizer_fn=layers.batch_norm,
-                padding='SAME', weights_initializer=self._w_init
-            )
-            r = layers.conv2d_transpose(
-                r, self._ch, 4, stride=2,
-                activation_fn=tf.nn.sigmoid,
-                padding='SAME', weights_initializer=self._w_init
-            )
+            r = deconv2d(r, 64, activation_fn=tf.nn.relu, batch_norm=True)
+            r = deconv2d(r, self._ch, activation_fn=tf.nn.sigmoid)
+
             return r
 
     @property
@@ -84,15 +70,8 @@ class D_conv():
 
     def __call__(self, x, reuse=False):
         with tf.variable_scope(self._scope, reuse=reuse):
-            d = layers.conv2d(
-                x, num_outputs=64, kernel_size=4,
-                stride=2, activation_fn=lrelu
-            )
-            d = layers.conv2d(
-                d, num_outputs=128, kernel_size=4,
-                stride=2, activation_fn=lrelu,
-                normalizer_fn=layers.batch_norm
-            )
+            d = conv2d(x, 64)
+            d = conv2d(d, 128, batch_norm=True)
             d = layers.flatten(d)
 
             d = layers.fully_connected(
